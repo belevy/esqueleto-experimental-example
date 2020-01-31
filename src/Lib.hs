@@ -7,6 +7,7 @@
            , OverloadedStrings
            , StandaloneDeriving
            , TemplateHaskell
+           , TypeApplications
            , TypeFamilies
            , QuasiQuotes
            , UndecidableInstances
@@ -16,10 +17,13 @@ module Lib
     ( initialize 
     ) where
 
+import Control.Monad.IO.Class (MonadIO)
 import Database.Persist
 import Database.Persist.TH
 import Database.Persist.Sql
 import Database.Persist.Sqlite
+import Database.Esqueleto hiding (from, on)
+import Database.Esqueleto.Experimental
 import Data.Time.Clock (UTCTime)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -62,6 +66,8 @@ share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
     deriving Show
 |]
 
+getAllHitmen :: MonadIO m => SqlPersistT m [Entity Hitman]
+getAllHitmen = select . from $ Table @Hitman
 
 initialize :: IO ()
 initialize = runSqlite ":memory:" $ do
