@@ -1,0 +1,5 @@
+.stack-work/
+esqueleto-experimental-example.cabal
+*~
+*.swp
+*.swo
