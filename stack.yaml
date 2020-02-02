@@ -41,7 +41,7 @@ packages:
 #
 extra-deps:
   - git: https://github.com/belevy/esqueleto.git 
-    commit: bb3affb17f535291c38d56cd17920346069d8aa4 
+    commit: c1f6f4d92171d97b37c2a8510f78376b81fb2dc0
   - persistent-2.10.0
   - persistent-template-2.8.2.1
   - persistent-mysql-2.10.0

@@ -73,13 +73,13 @@ getAllHitmen = select . from $ Table @Hitman
 -- Get all the hitmen that are pursuing active marks (i.e. marks that haven’t been erased yet)
 getAllHitmenPursuingActiveMarks :: MonadIO m => SqlPersistT m [Entity Hitman]
 getAllHitmenPursuingActiveMarks = select $ do
-  ((hitmen, pursuingMarks), erasedMarks) <- 
+  (hitmen :& pursuingMarks :& erasedMarks) <- 
     from $ Table @Hitman
     `InnerJoin` Table @PursuingMark
-    `on` (\(hitmen,pursuingMarks) ->
+    `on` (\(hitmen :& pursuingMarks) ->
             pursuingMarks ^. PursuingMarkHitmanId ==. hitmen ^. HitmanId)
     `LeftOuterJoin` Table @ErasedMark
-    `on` (\((_, pursuingMarks), erasedMarks) ->
+    `on` (\(_ :& pursuingMarks :& erasedMarks) ->
            erasedMarks ?. ErasedMarkMarkId ==. just (pursuingMarks ^. PursuingMarkMarkId))
   where_ $ isNothing $ erasedMarks ?. ErasedMarkId
   pure hitmen
@@ -87,10 +87,10 @@ getAllHitmenPursuingActiveMarks = select $ do
 
 fromAllMarksErasedSince :: UTCTime -> SqlQuery (SqlExpr (Entity Mark), SqlExpr (Entity ErasedMark))
 fromAllMarksErasedSince t = do
-  (marks, erasedMarks) <- 
+  (marks :& erasedMarks) <- 
     from $ Table @Mark
     `InnerJoin` Table @ErasedMark
-    `on` (\(marks, erasedMarks) ->
+    `on` (\(marks :& erasedMarks) ->
             erasedMarks ^. ErasedMarkMarkId ==. marks ^. MarkId)
   where_ $ erasedMarks ^. ErasedMarkCreatedAt >=. val t
   pure (marks,erasedMarks)
@@ -122,16 +122,17 @@ getTotalBountyAwardedToHitman hitmanId = select $ do
 
 latestKillForEachHitman :: SqlQuery (SqlExpr (Entity Hitman), SqlExpr (Maybe (Entity Mark)))
 latestKillForEachHitman = do
-    ((hitmen, (_, marks)), erasedMarksLimit) <- 
+    (hitmen :& _ :& erasedMarksLimit :& marks) <- 
       from $ Table @Hitman 
-      `LeftOuterJoin` ( Table @ErasedMark
-            `InnerJoin` Table @Mark
-            `on` (\(em, m) -> m ^. MarkId ==. em ^. ErasedMarkMarkId))
-      `on` (\(h, (em, _)) -> just (h ^. HitmanId) ==. em ?. ErasedMarkHitmanId)
       `LeftOuterJoin` Table @ErasedMark
-      `on` (\((_, (em, _)), emLimit) -> 
+      `on` (\(h :& em ) -> just (h ^. HitmanId) ==. em ?. ErasedMarkHitmanId)
+      `LeftOuterJoin` Table @ErasedMark
+      `on` (\(_ :& em :& emLimit) -> 
              emLimit ?. ErasedMarkHitmanId ==. (em ?. ErasedMarkHitmanId)
          &&. emLimit ?. ErasedMarkCreatedAt >. (em ?. ErasedMarkCreatedAt))
+      `LeftOuterJoin` Table @Mark
+      `on` (\(_ :& em :& _ :& marks) ->
+              em ?. ErasedMarkMarkId ==. marks ?. MarkId)
     where_ $ isNothing $ erasedMarksLimit ?. ErasedMarkCreatedAt 
     pure (hitmen, marks)
 
@@ -150,13 +151,13 @@ getHitmansLatestKill hitmanId = fmap (join . listToMaybe) $
 --Get all the active marks that have only a single pursuer
 getActiveMarksWithSinglePursuer :: MonadIO m => SqlPersistT m [Entity Mark]
 getActiveMarksWithSinglePursuer = select $ do
-  ((marks, _), erasedMarks) <- 
+  (marks :& _ :& erasedMarks) <- 
     from $ Table @Mark
     `InnerJoin` SelectQuery allMarksWithSinglePursuer
-    `on` (\(marks, marksWithSinglePursuer) ->
+    `on` (\(marks :& marksWithSinglePursuer) ->
           marksWithSinglePursuer ^. PursuingMarkMarkId ==. marks ^. MarkId )
     `LeftOuterJoin` Table @ErasedMark
-    `on` (\((marks, _), erasedMarks) -> 
+    `on` (\(marks :& _ :& erasedMarks) -> 
            erasedMarks ?. ErasedMarkMarkId ==. just (marks ^. MarkId))
   where_ $ isNothing $ erasedMarks ?. ErasedMarkMarkId
   pure marks
@@ -170,13 +171,13 @@ getActiveMarksWithSinglePursuer = select $ do
 --Get all the “marks of opportunity” (i.e. marks that a hitman erased without them marking the mark as being pursued first)
 getMarksOfOpportunity :: MonadIO m => SqlPersistT m [Entity Mark]
 getMarksOfOpportunity = select $ do
-  ((marks, _), pursuingMarks) <- 
+  (marks :& _ :& pursuingMarks) <- 
     from $ Table @Mark
     `InnerJoin` Table @ErasedMark
-    `on` (\(marks, erasedMarks) -> 
+    `on` (\(marks :& erasedMarks) -> 
             marks ^. MarkId ==. erasedMarks ^. ErasedMarkMarkId)
     `LeftOuterJoin` Table @PursuingMark
-    `on` (\((_, erasedMarks), pursuingMarks) ->
+    `on` (\(_ :& erasedMarks :& pursuingMarks) ->
             just (erasedMarks ^. ErasedMarkMarkId) ==. pursuingMarks ?. PursuingMarkMarkId)
   where_ $ isNothing $ pursuingMarks ?. PursuingMarkMarkId
   pure marks
