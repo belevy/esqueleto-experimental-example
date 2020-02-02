@@ -13,17 +13,15 @@
            , UndecidableInstances
  #-}
 
-module Lib
-    ( initialize 
-    ) where
+module Lib where
 
 import Control.Monad (join)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Database.Persist.TH
-import Database.Persist.Sqlite (runSqlite)
 import Database.Esqueleto hiding (From, from, on)
+import qualified Database.Esqueleto as E 
 import Database.Esqueleto.Experimental
-import Data.Time.Clock (UTCTime, getCurrentTime)
+import Data.Time.Clock (UTCTime)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Int
@@ -70,6 +68,9 @@ share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 getAllHitmen :: MonadIO m => SqlPersistT m [Entity Hitman]
 getAllHitmen = select . from $ Table @Hitman
 
+getAllHitmenOld :: MonadIO m => SqlPersistT m [Entity Hitman]
+getAllHitmenOld = select . E.from $ pure 
+
 -- Get all the hitmen that are pursuing active marks (i.e. marks that haven’t been erased yet)
 getAllHitmenPursuingActiveMarks :: MonadIO m => SqlPersistT m [Entity Hitman]
 getAllHitmenPursuingActiveMarks = select $ do
@@ -84,6 +85,17 @@ getAllHitmenPursuingActiveMarks = select $ do
   where_ $ isNothing $ erasedMarks ?. ErasedMarkId
   pure hitmen
 
+getAllHitmenPursuingActiveMarksOld :: MonadIO m => SqlPersistT m [Entity Hitman]
+getAllHitmenPursuingActiveMarksOld = select . E.from $ \(
+                    hitmen 
+    `InnerJoin`     pursuingMarks 
+    `LeftOuterJoin` erasedMarks
+  ) -> do
+  E.on $ pursuingMarks ^. PursuingMarkHitmanId ==. hitmen ^. HitmanId
+  E.on $ erasedMarks ?. ErasedMarkMarkId ==. just (pursuingMarks ^. PursuingMarkMarkId)
+  where_ $ isNothing $ erasedMarks ?. ErasedMarkId
+  pure hitmen
+
 
 fromAllMarksErasedSince :: UTCTime -> SqlQuery (SqlExpr (Entity Mark), SqlExpr (Entity ErasedMark))
 fromAllMarksErasedSince t = do
@@ -92,6 +104,15 @@ fromAllMarksErasedSince t = do
     `InnerJoin` Table @ErasedMark
     `on` (\(marks :& erasedMarks) ->
             erasedMarks ^. ErasedMarkMarkId ==. marks ^. MarkId)
+  where_ $ erasedMarks ^. ErasedMarkCreatedAt >=. val t
+  pure (marks,erasedMarks)
+
+fromAllMarksErasedSinceOld :: UTCTime -> SqlQuery (SqlExpr (Entity Mark), SqlExpr (Entity ErasedMark))
+fromAllMarksErasedSinceOld t = E.from $ \( 
+                marks
+    `InnerJoin` erasedMarks
+  ) -> do
+  E.on $ erasedMarks ^. ErasedMarkMarkId ==. marks ^. MarkId
   where_ $ erasedMarks ^. ErasedMarkCreatedAt >=. val t
   pure (marks,erasedMarks)
 
@@ -113,10 +134,20 @@ getTotalBountyPerHitman = select $ do
   groupBy $ erasedMarks ^. ErasedMarkHitmanId
   pure (erasedMarks ^. ErasedMarkHitmanId, sum_ (erasedMarks ^. ErasedMarkAwardedBounty))
 
+getTotalBountyPerHitmanOld :: MonadIO m => SqlPersistT m [(Value HitmanId, Value (Maybe Int64))]
+getTotalBountyPerHitmanOld = select . E.from $ \erasedMarks -> do
+  groupBy $ erasedMarks ^. ErasedMarkHitmanId
+  pure (erasedMarks ^. ErasedMarkHitmanId, sum_ (erasedMarks ^. ErasedMarkAwardedBounty))
+
 --Get the total bounty awarded to a specific hitman
 getTotalBountyAwardedToHitman :: MonadIO m => HitmanId -> SqlPersistT m [Value (Maybe Int64)]
 getTotalBountyAwardedToHitman hitmanId = select $ do
   erasedMarks <- from $ Table @ErasedMark
+  where_ $ erasedMarks ^. ErasedMarkHitmanId ==. val hitmanId
+  pure (sum_ $ erasedMarks ^. ErasedMarkAwardedBounty)
+
+getTotalBountyAwardedToHitmanOld :: MonadIO m => HitmanId -> SqlPersistT m [Value (Maybe Int64)]
+getTotalBountyAwardedToHitmanOld hitmanId = select . E.from $ \erasedMarks -> do
   where_ $ erasedMarks ^. ErasedMarkHitmanId ==. val hitmanId
   pure (sum_ $ erasedMarks ^. ErasedMarkAwardedBounty)
 
@@ -136,6 +167,20 @@ latestKillForEachHitman = do
     where_ $ isNothing $ erasedMarksLimit ?. ErasedMarkCreatedAt 
     pure (hitmen, marks)
 
+latestKillForEachHitmanOld :: SqlQuery (SqlExpr (Entity Hitman), SqlExpr (Maybe (Entity Mark)))
+latestKillForEachHitmanOld = E.from $ \(
+                    hitmen
+    `LeftOuterJoin` em
+    `LeftOuterJoin` emLimit
+    `LeftOuterJoin` marks
+  ) -> do
+  E.on $ just (hitmen ^. HitmanId) ==. em ?. ErasedMarkHitmanId
+  E.on $ emLimit ?. ErasedMarkHitmanId ==. (em ?. ErasedMarkHitmanId)
+     &&. emLimit ?. ErasedMarkCreatedAt >. (em ?. ErasedMarkCreatedAt)
+  E.on $ em ?. ErasedMarkMarkId ==. marks ?. MarkId
+  where_ $ isNothing $ emLimit ?. ErasedMarkCreatedAt 
+  pure (hitmen, marks)
+
 --Get each hitman’s latest kill
 getLatestKillForEachHitman :: MonadIO m => SqlPersistT m [(Entity Hitman, Maybe (Entity Mark))]
 getLatestKillForEachHitman = select latestKillForEachHitman
@@ -150,23 +195,58 @@ getHitmansLatestKill hitmanId = fmap (join . listToMaybe) $
 
 --Get all the active marks that have only a single pursuer
 getActiveMarksWithSinglePursuer :: MonadIO m => SqlPersistT m [Entity Mark]
-getActiveMarksWithSinglePursuer = select $ do
+getActiveMarksWithSinglePursuer = select $ do 
+  (marks :& erasedMarks) <- 
+    from $ Table @Mark
+    `LeftOuterJoin` Table @ErasedMark
+    `on` (\(marks :& erasedMarks) -> 
+           erasedMarks ?. ErasedMarkMarkId ==. just (marks ^. MarkId))
+  where_ $ isNothing (erasedMarks ?. ErasedMarkMarkId)
+       &&. marks ^. MarkId `in_` subSelectList allMarksWithSinglePursuer
+  pure marks
+
+  where 
+    allMarksWithSinglePursuer = do
+      pursuingMark <- from $ Table @PursuingMark
+      having $ count (pursuingMark ^. PursuingMarkHitmanId) ==. val @Int 1
+      groupBy $ pursuingMark ^. PursuingMarkMarkId
+      pure $ pursuingMark ^. PursuingMarkMarkId
+
+getActiveMarksWithSinglePursuerWithSubqueryJoin :: MonadIO m => SqlPersistT m [Entity Mark]
+getActiveMarksWithSinglePursuerWithSubqueryJoin = select $ do 
   (marks :& _ :& erasedMarks) <- 
     from $ Table @Mark
     `InnerJoin` SelectQuery allMarksWithSinglePursuer
-    `on` (\(marks :& marksWithSinglePursuer) ->
-          marksWithSinglePursuer ^. PursuingMarkMarkId ==. marks ^. MarkId )
+    `on` (\(marks :& spMarks) ->
+           spMarks ==. marks ^. MarkId)
     `LeftOuterJoin` Table @ErasedMark
     `on` (\(marks :& _ :& erasedMarks) -> 
            erasedMarks ?. ErasedMarkMarkId ==. just (marks ^. MarkId))
-  where_ $ isNothing $ erasedMarks ?. ErasedMarkMarkId
+  where_ $ isNothing (erasedMarks ?. ErasedMarkMarkId)
   pure marks
 
-  where
+  where 
     allMarksWithSinglePursuer = do
       pursuingMark <- from $ Table @PursuingMark
-      where_ $ count (pursuingMark ^. PursuingMarkMarkId) ==. val @Int 1
-      pure pursuingMark
+      having $ count (pursuingMark ^. PursuingMarkHitmanId) ==. val @Int 1
+      groupBy $ pursuingMark ^. PursuingMarkMarkId
+      pure $ pursuingMark ^. PursuingMarkMarkId
+
+getActiveMarksWithSinglePursuerOld :: MonadIO m => SqlPersistT m [Entity Mark]
+getActiveMarksWithSinglePursuerOld = select . E.from $ \(
+                    marks
+    `LeftOuterJoin` erasedMarks
+  ) -> do
+  E.on $ erasedMarks ?. ErasedMarkMarkId ==. just (marks ^. MarkId)
+  where_ $ isNothing (erasedMarks ?. ErasedMarkMarkId)
+       &&. marks ^. MarkId `in_` subSelectList allMarksWithSinglePursuer
+  pure marks
+
+  where 
+    allMarksWithSinglePursuer = E.from $ \pursuingMark -> do
+      having $ count (pursuingMark ^. PursuingMarkHitmanId) ==. val @Int 1
+      groupBy $ pursuingMark ^. PursuingMarkMarkId
+      pure $ pursuingMark ^. PursuingMarkMarkId
 
 --Get all the “marks of opportunity” (i.e. marks that a hitman erased without them marking the mark as being pursued first)
 getMarksOfOpportunity :: MonadIO m => SqlPersistT m [Entity Mark]
@@ -182,7 +262,17 @@ getMarksOfOpportunity = select $ do
   where_ $ isNothing $ pursuingMarks ?. PursuingMarkMarkId
   pure marks
 
+getMarksOfOpportunityOld :: MonadIO m => SqlPersistT m [Entity Mark]
+getMarksOfOpportunityOld = select . E.from $ \(
+                    marks
+    `InnerJoin`     erasedMarks
+    `LeftOuterJoin` pursuingMarks
+  ) -> do
+  E.on $ marks ^. MarkId ==. erasedMarks ^. ErasedMarkMarkId
+  E.on $ just (erasedMarks ^. ErasedMarkMarkId) ==. pursuingMarks ?. PursuingMarkMarkId
+  where_ $ isNothing $ pursuingMarks ?. PursuingMarkMarkId
+  pure marks
+
 initialize :: IO ()
-initialize = runSqlite ":memory:" $ do
-  printMigration migrateAll
-  pure ()
+initialize = do
+    putStrLn "Executable not implemented"

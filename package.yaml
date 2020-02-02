@@ -27,7 +27,6 @@ library:
   dependencies: 
     - esqueleto
     - persistent
-    - persistent-sqlite
     - persistent-template
     - time
     - text
@@ -53,3 +52,7 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - esqueleto-experimental-example 
+    - persistent
+    - persistent-sqlite
+    - time
+    - text

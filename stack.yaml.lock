@@ -33,26 +33,12 @@ packages:
   original:
     hackage: persistent-template-2.8.2.1
 - completed:
-    hackage: persistent-mysql-2.10.0@sha256:4bf76721312104b726406d3cac4a30185e9e19898605615ded6cbfe5cdabda6a,2884
-    pantry-tree:
-      size: 460
-      sha256: 15737a7f8af7085fa6f83f1c084ff4de4922f28576633aa9aab4a8e668ccc5c3
-  original:
-    hackage: persistent-mysql-2.10.0
-- completed:
     hackage: persistent-sqlite-2.10.0@sha256:d41ad3e2d9b88ab31bfdcd15e76ad41cd495573937921026b3b13f010ff9b8cf,4664
     pantry-tree:
       size: 681
       sha256: 86ad7225024dbe74421b78ab6a6c3e05aeb94d0633cde413f7e91453bee3e7c0
   original:
     hackage: persistent-sqlite-2.10.0
-- completed:
-    hackage: postgresql-simple-0.6.1@sha256:316e6424da50ec863c74dcf2d7c86cfe6ee00cb142c07a422eb118577dc1d3b7,5256
-    pantry-tree:
-      size: 4055
-      sha256: c22e1f054f3be5eaad5eba5abc793504be85e441ff671bf203013ac8f72f9c79
-  original:
-    hackage: postgresql-simple-0.6.1
 - completed:
     hackage: th-lift-0.8.1@sha256:51ffb3c76b2175405f643d5461a07820fade6c5ac635698a87afe3aba35ae343,2544
     pantry-tree:

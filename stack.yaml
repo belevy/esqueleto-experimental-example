@@ -44,9 +44,7 @@ extra-deps:
     commit: c1f6f4d92171d97b37c2a8510f78376b81fb2dc0
   - persistent-2.10.0
   - persistent-template-2.8.2.1
-  - persistent-mysql-2.10.0
   - persistent-sqlite-2.10.0
-  - postgresql-simple-0.6.1
   - th-lift-0.8.1
   - th-lift-instances-0.1.14
 # Override default flag values for local packages and extra-deps
