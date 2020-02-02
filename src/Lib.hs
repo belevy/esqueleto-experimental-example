@@ -17,6 +17,7 @@ module Lib
     ( initialize 
     ) where
 
+import Control.Monad (join)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Database.Persist.TH
 import Database.Persist.Sqlite (runSqlite)
@@ -26,6 +27,7 @@ import Data.Time.Clock (UTCTime, getCurrentTime)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Int
+import Data.Maybe (listToMaybe)
 
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
   Handler sql=handlers
@@ -118,17 +120,52 @@ getTotalBountyAwardedToHitman hitmanId = select $ do
   where_ $ erasedMarks ^. ErasedMarkHitmanId ==. val hitmanId
   pure (sum_ $ erasedMarks ^. ErasedMarkAwardedBounty)
 
+latestKillForEachHitman :: SqlQuery (SqlExpr (Entity Hitman), SqlExpr (Maybe (Entity Mark)))
+latestKillForEachHitman = do
+    ((hitmen, (_, marks)), erasedMarksLimit) <- 
+      from $ Table @Hitman 
+      `LeftOuterJoin` ( Table @ErasedMark
+            `InnerJoin` Table @Mark
+            `on` (\(em, m) -> m ^. MarkId ==. em ^. ErasedMarkMarkId))
+      `on` (\(h, (em, _)) -> just (h ^. HitmanId) ==. em ?. ErasedMarkHitmanId)
+      `LeftOuterJoin` Table @ErasedMark
+      `on` (\((_, (em, _)), emLimit) -> 
+             emLimit ?. ErasedMarkHitmanId ==. (em ?. ErasedMarkHitmanId)
+         &&. emLimit ?. ErasedMarkCreatedAt >. (em ?. ErasedMarkCreatedAt))
+    where_ $ isNothing $ erasedMarksLimit ?. ErasedMarkCreatedAt 
+    pure (hitmen, marks)
+
 --Get each hitman’s latest kill
 getLatestKillForEachHitman :: MonadIO m => SqlPersistT m [(Entity Hitman, Maybe (Entity Mark))]
-getLatestKillForEachHitman = undefined
+getLatestKillForEachHitman = select latestKillForEachHitman
 
 --Get a specific hitman’s latest kill
 getHitmansLatestKill :: MonadIO m => HitmanId -> SqlPersistT m (Maybe (Entity Mark))
-getHitmansLatestKill hitmanId = undefined
+getHitmansLatestKill hitmanId = fmap (join . listToMaybe) $ 
+  select $ do
+  (hitmen, marks) <- latestKillForEachHitman
+  where_ $ hitmen ^. HitmanId ==. val hitmanId
+  pure marks
 
 --Get all the active marks that have only a single pursuer
 getActiveMarksWithSinglePursuer :: MonadIO m => SqlPersistT m [Entity Mark]
-getActiveMarksWithSinglePursuer = undefined 
+getActiveMarksWithSinglePursuer = select $ do
+  ((marks, _), erasedMarks) <- 
+    from $ Table @Mark
+    `InnerJoin` SelectQuery allMarksWithSinglePursuer
+    `on` (\(marks, marksWithSinglePursuer) ->
+          marksWithSinglePursuer ^. PursuingMarkMarkId ==. marks ^. MarkId )
+    `LeftOuterJoin` Table @ErasedMark
+    `on` (\((marks, _), erasedMarks) -> 
+           erasedMarks ?. ErasedMarkMarkId ==. just (marks ^. MarkId))
+  where_ $ isNothing $ erasedMarks ?. ErasedMarkMarkId
+  pure marks
+
+  where
+    allMarksWithSinglePursuer = do
+      pursuingMark <- from $ Table @PursuingMark
+      where_ $ count (pursuingMark ^. PursuingMarkMarkId) ==. val @Int 1
+      pure pursuingMark
 
 --Get all the “marks of opportunity” (i.e. marks that a hitman erased without them marking the mark as being pursued first)
 getMarksOfOpportunity :: MonadIO m => SqlPersistT m [Entity Mark]
