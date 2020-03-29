@@ -40,8 +40,7 @@ packages:
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
 extra-deps:
-  - git: https://github.com/belevy/esqueleto.git 
-    commit: c1f6f4d92171d97b37c2a8510f78376b81fb2dc0
+  - esqueleto-3.3.3.0
   - persistent-2.10.0
   - persistent-template-2.8.2.1
   - persistent-sqlite-2.10.0

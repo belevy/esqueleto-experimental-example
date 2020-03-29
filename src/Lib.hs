@@ -17,64 +17,27 @@ module Lib where
 
 import Control.Monad (join)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Database.Persist.TH
 import Database.Esqueleto hiding (From, from, on)
-import qualified Database.Esqueleto as E 
+import qualified Database.Esqueleto as E
 import Database.Esqueleto.Experimental
 import Data.Time.Clock (UTCTime)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Int
 import Data.Maybe (listToMaybe)
-
-share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
-  Handler sql=handlers
-    codename Text    
-    createdAt UTCTime
-    updatedAt UTCTime Maybe
-    deriving Show
-  Hitman sql=hitmen
-    codename Text
-    handlerId HandlerId
-    createdAt UTCTime
-    updatedAt UTCTime Maybe
-    deriving Show
-  Mark sql=marks
-    listBounty Int64
-    firstName Text
-    lastName Text
-    description Text Maybe
-    createdAt UTCTime
-    updatedAt UTCTime Maybe
-    deriving Show
-  PursuingMark sql=pursuing_marks
-    hitmanId HitmanId 
-    markId MarkId
-    createdAt UTCTime
-    updatedAt UTCTime Maybe
-    Primary hitmanId markId
-    deriving Show
-  ErasedMark sql=erased_marks
-    hitmanId HitmanId 
-    markId MarkId
-    awardedBounty Int64
-    createdAt UTCTime
-    updatedAt UTCTime Maybe
-    Primary hitmanId markId
-    deriving Show
-|]
+import DB
 
 -- Get all the hitmen
 getAllHitmen :: MonadIO m => SqlPersistT m [Entity Hitman]
 getAllHitmen = select . from $ Table @Hitman
 
 getAllHitmenOld :: MonadIO m => SqlPersistT m [Entity Hitman]
-getAllHitmenOld = select . E.from $ pure 
+getAllHitmenOld = select . E.from $ pure
 
 -- Get all the hitmen that are pursuing active marks (i.e. marks that haven’t been erased yet)
 getAllHitmenPursuingActiveMarks :: MonadIO m => SqlPersistT m [Entity Hitman]
 getAllHitmenPursuingActiveMarks = select $ do
-  (hitmen :& pursuingMarks :& erasedMarks) <- 
+  hitmen :& pursuingMarks :& erasedMarks <-
     from $ Table @Hitman
     `InnerJoin` Table @PursuingMark
     `on` (\(hitmen :& pursuingMarks) ->
@@ -87,8 +50,8 @@ getAllHitmenPursuingActiveMarks = select $ do
 
 getAllHitmenPursuingActiveMarksOld :: MonadIO m => SqlPersistT m [Entity Hitman]
 getAllHitmenPursuingActiveMarksOld = select . E.from $ \(
-                    hitmen 
-    `InnerJoin`     pursuingMarks 
+                    hitmen
+    `InnerJoin`     pursuingMarks
     `LeftOuterJoin` erasedMarks
   ) -> do
   E.on $ pursuingMarks ^. PursuingMarkHitmanId ==. hitmen ^. HitmanId
@@ -99,7 +62,7 @@ getAllHitmenPursuingActiveMarksOld = select . E.from $ \(
 
 fromAllMarksErasedSince :: UTCTime -> SqlQuery (SqlExpr (Entity Mark), SqlExpr (Entity ErasedMark))
 fromAllMarksErasedSince t = do
-  (marks :& erasedMarks) <- 
+  marks :& erasedMarks <-
     from $ Table @Mark
     `InnerJoin` Table @ErasedMark
     `on` (\(marks :& erasedMarks) ->
@@ -108,7 +71,7 @@ fromAllMarksErasedSince t = do
   pure (marks,erasedMarks)
 
 fromAllMarksErasedSinceOld :: UTCTime -> SqlQuery (SqlExpr (Entity Mark), SqlExpr (Entity ErasedMark))
-fromAllMarksErasedSinceOld t = E.from $ \( 
+fromAllMarksErasedSinceOld t = E.from $ \(
                 marks
     `InnerJoin` erasedMarks
   ) -> do
@@ -121,7 +84,7 @@ getAllMarksErasedSince :: MonadIO m => UTCTime -> SqlPersistT m [Entity Mark]
 getAllMarksErasedSince t = select $ fst <$> fromAllMarksErasedSince t
 
 -- Get all the marks that have been erased since a given date by a given hitman
-getAllMarksErasedSinceBy :: MonadIO m => UTCTime -> HitmanId -> SqlPersistT m [Entity Mark] 
+getAllMarksErasedSinceBy :: MonadIO m => UTCTime -> HitmanId -> SqlPersistT m [Entity Mark]
 getAllMarksErasedSinceBy t hitmanId = select $ do
   (marks, erasedMarks) <- fromAllMarksErasedSince t
   where_ $ erasedMarks ^. ErasedMarkHitmanId ==. val hitmanId
@@ -153,18 +116,19 @@ getTotalBountyAwardedToHitmanOld hitmanId = select . E.from $ \erasedMarks -> do
 
 latestKillForEachHitman :: SqlQuery (SqlExpr (Entity Hitman), SqlExpr (Maybe (Entity Mark)))
 latestKillForEachHitman = do
-    (hitmen :& _ :& erasedMarksLimit :& marks) <- 
-      from $ Table @Hitman 
+    hitmen :& _ :& erasedMarksLimit :& marks <-
+      from $ Table @Hitman
       `LeftOuterJoin` Table @ErasedMark
-      `on` (\(h :& em ) -> just (h ^. HitmanId) ==. em ?. ErasedMarkHitmanId)
+      `on` (\(h :& em) ->
+             just (h ^. HitmanId) ==. em ?. ErasedMarkHitmanId)
       `LeftOuterJoin` Table @ErasedMark
-      `on` (\(_ :& em :& emLimit) -> 
+      `on` (\(_ :& em :& emLimit) ->
              emLimit ?. ErasedMarkHitmanId ==. (em ?. ErasedMarkHitmanId)
          &&. emLimit ?. ErasedMarkCreatedAt >. (em ?. ErasedMarkCreatedAt))
       `LeftOuterJoin` Table @Mark
       `on` (\(_ :& em :& _ :& marks) ->
               em ?. ErasedMarkMarkId ==. marks ?. MarkId)
-    where_ $ isNothing $ erasedMarksLimit ?. ErasedMarkCreatedAt 
+    where_ $ isNothing $ erasedMarksLimit ?. ErasedMarkCreatedAt
     pure (hitmen, marks)
 
 latestKillForEachHitmanOld :: SqlQuery (SqlExpr (Entity Hitman), SqlExpr (Maybe (Entity Mark)))
@@ -178,7 +142,7 @@ latestKillForEachHitmanOld = E.from $ \(
   E.on $ emLimit ?. ErasedMarkHitmanId ==. (em ?. ErasedMarkHitmanId)
      &&. emLimit ?. ErasedMarkCreatedAt >. (em ?. ErasedMarkCreatedAt)
   E.on $ em ?. ErasedMarkMarkId ==. marks ?. MarkId
-  where_ $ isNothing $ emLimit ?. ErasedMarkCreatedAt 
+  where_ $ isNothing $ emLimit ?. ErasedMarkCreatedAt
   pure (hitmen, marks)
 
 --Get each hitman’s latest kill
@@ -187,7 +151,7 @@ getLatestKillForEachHitman = select latestKillForEachHitman
 
 --Get a specific hitman’s latest kill
 getHitmansLatestKill :: MonadIO m => HitmanId -> SqlPersistT m (Maybe (Entity Mark))
-getHitmansLatestKill hitmanId = fmap (join . listToMaybe) $ 
+getHitmansLatestKill hitmanId = fmap (join . listToMaybe) $
   select $ do
   (hitmen, marks) <- latestKillForEachHitman
   where_ $ hitmen ^. HitmanId ==. val hitmanId
@@ -195,17 +159,17 @@ getHitmansLatestKill hitmanId = fmap (join . listToMaybe) $
 
 --Get all the active marks that have only a single pursuer
 getActiveMarksWithSinglePursuer :: MonadIO m => SqlPersistT m [Entity Mark]
-getActiveMarksWithSinglePursuer = select $ do 
-  (marks :& erasedMarks) <- 
+getActiveMarksWithSinglePursuer = select $ do
+  (marks :& erasedMarks) <-
     from $ Table @Mark
     `LeftOuterJoin` Table @ErasedMark
-    `on` (\(marks :& erasedMarks) -> 
+    `on` (\(marks :& erasedMarks) ->
            erasedMarks ?. ErasedMarkMarkId ==. just (marks ^. MarkId))
   where_ $ isNothing (erasedMarks ?. ErasedMarkMarkId)
        &&. marks ^. MarkId `in_` subSelectList allMarksWithSinglePursuer
   pure marks
 
-  where 
+  where
     allMarksWithSinglePursuer = do
       pursuingMark <- from $ Table @PursuingMark
       having $ count (pursuingMark ^. PursuingMarkHitmanId) ==. val @Int 1
@@ -213,19 +177,19 @@ getActiveMarksWithSinglePursuer = select $ do
       pure $ pursuingMark ^. PursuingMarkMarkId
 
 getActiveMarksWithSinglePursuerWithSubqueryJoin :: MonadIO m => SqlPersistT m [Entity Mark]
-getActiveMarksWithSinglePursuerWithSubqueryJoin = select $ do 
-  (marks :& _ :& erasedMarks) <- 
+getActiveMarksWithSinglePursuerWithSubqueryJoin = select $ do
+  (marks :& _ :& erasedMarks) <-
     from $ Table @Mark
     `InnerJoin` SelectQuery allMarksWithSinglePursuer
     `on` (\(marks :& spMarks) ->
            spMarks ==. marks ^. MarkId)
     `LeftOuterJoin` Table @ErasedMark
-    `on` (\(marks :& _ :& erasedMarks) -> 
+    `on` (\(marks :& _ :& erasedMarks) ->
            erasedMarks ?. ErasedMarkMarkId ==. just (marks ^. MarkId))
   where_ $ isNothing (erasedMarks ?. ErasedMarkMarkId)
   pure marks
 
-  where 
+  where
     allMarksWithSinglePursuer = do
       pursuingMark <- from $ Table @PursuingMark
       having $ count (pursuingMark ^. PursuingMarkHitmanId) ==. val @Int 1
@@ -242,7 +206,7 @@ getActiveMarksWithSinglePursuerOld = select . E.from $ \(
        &&. marks ^. MarkId `in_` subSelectList allMarksWithSinglePursuer
   pure marks
 
-  where 
+  where
     allMarksWithSinglePursuer = E.from $ \pursuingMark -> do
       having $ count (pursuingMark ^. PursuingMarkHitmanId) ==. val @Int 1
       groupBy $ pursuingMark ^. PursuingMarkMarkId
@@ -251,10 +215,10 @@ getActiveMarksWithSinglePursuerOld = select . E.from $ \(
 --Get all the “marks of opportunity” (i.e. marks that a hitman erased without them marking the mark as being pursued first)
 getMarksOfOpportunity :: MonadIO m => SqlPersistT m [Entity Mark]
 getMarksOfOpportunity = select $ do
-  (marks :& _ :& pursuingMarks) <- 
+  (marks :& _ :& pursuingMarks) <-
     from $ Table @Mark
     `InnerJoin` Table @ErasedMark
-    `on` (\(marks :& erasedMarks) -> 
+    `on` (\(marks :& erasedMarks) ->
             marks ^. MarkId ==. erasedMarks ^. ErasedMarkMarkId)
     `LeftOuterJoin` Table @PursuingMark
     `on` (\(_ :& erasedMarks :& pursuingMarks) ->
